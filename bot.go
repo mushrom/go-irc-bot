@@ -14,42 +14,71 @@ import (
 	"github.com/thoj/go-ircevent"
 )
 
-func ping(ircobj *irc.Connection, channel, nick, msg string) {
+type ircBot struct {
+	conn     *irc.Connection;
+
+	links    []string;
+	linkfd   *os.File;
+
+	prefix   *string;
+	nick     *string;
+	channels *string;
+	nickpass *string;
+	server   *string;
+
+	commands map[string] func(*ircBot, *irc.Event);
+};
+
+func ping(bot *ircBot, event *irc.Event) {
 	curstr := strconv.FormatInt(time.Now().UTC().Unix(), 10);
-	ircobj.Privmsg(channel, nick + ": Pong, " + curstr);
+	bot.conn.Privmsg(event.Arguments[0], event.Nick + ": Pong, " + curstr);
 }
 
-func randomLink(ircobj *irc.Connection, channel, nick, msg string, links []string) {
+func randomLink(bot *ircBot, event *irc.Event) {
 	rand.Seed(time.Now().Unix())
-	ircobj.Privmsg(channel, nick + ": " + links[rand.Intn(len(links))]);
+	bot.conn.Privmsg(event.Arguments[0], event.Nick + ": " +
+	                 bot.links[rand.Intn(len(bot.links))]);
 }
 
-func printPrompt(ircobj *irc.Connection) {
-	fmt.Print(ircobj.GetNick(), "> ")
+func printCommands(bot *ircBot, event *irc.Event) {
+	temp := "";
+	for key := range bot.commands {
+		temp += *bot.prefix + key + " ";
+	}
+
+	bot.conn.Privmsg(event.Arguments[0],
+	event.Nick + ": Current commands: " + temp);
 }
 
-func lineloop(ircobj *irc.Connection) {
+func printPrompt(bot *ircBot) {
+	fmt.Print(*bot.nick, "> ")
+}
+
+func lineloop(bot *ircBot) {
 	scanner := bufio.NewScanner(os.Stdin)
-	printPrompt(ircobj);
+	printPrompt(bot);
 
 	for scanner.Scan() {
 		args := strings.Split(scanner.Text(), " ");
 
 		switch args[0] {
 			case "join":
-				if len(args) > 1 { ircobj.Join(args[1]); }
+				if len(args) > 1 { bot.conn.Join(args[1]); }
 
 			case "part":
-				if len(args) > 1 { ircobj.Part(args[1]); }
+				if len(args) > 1 { bot.conn.Part(args[1]); }
 
 			case "say":
 				if len(args) > 2 {
 					temp := strings.Join(args[2:], " ")
-					ircobj.Privmsg(args[1], temp)
+					bot.conn.Privmsg(args[1], temp)
 				}
 
 			case "quit":
-				ircobj.Quit();
+				bot.conn.Quit();
+
+			case "prefix":
+				if len(args) > 1 { bot.prefix = &args[1]; }
 
 			case "help": fallthrough
 			case "commands":
@@ -57,10 +86,11 @@ func lineloop(ircobj *irc.Connection) {
 					"    join [channel]\n",
 					"    part [channel]\n",
 					"    say [channel] [message ...]\n",
+					"    prefix [string]\n",
 					"    help | commands\n");
 		}
 
-		printPrompt(ircobj);
+		printPrompt(bot);
 	}
 }
 
@@ -72,7 +102,6 @@ func loadLinksFile(fname string) (*os.File, []string) {
 		if err == nil {
 			scanner := bufio.NewScanner(f);
 			for scanner.Scan() {
-				fmt.Printf("have link %s\n", scanner.Text())
 				retlinks = append(retlinks, scanner.Text())
 			}
 			f.Close();
@@ -91,108 +120,137 @@ func loadLinksFile(fname string) (*os.File, []string) {
 	return f, retlinks
 }
 
-func main() {
-	nick := flag.String("nick", "chaibot", "IRC nickname")
-	server := flag.String("server", "irc.rizon.net:6697", "server:port combination")
-	nickpass := flag.String("nickpass", "", "Password to identify with NickServ")
-	channels := flag.String("channels", "#fugginbot", "Comma-seperated list of channels to join on startup")
-	prefix := flag.String("prefix", ";", "Command prefix")
-	flag.Parse();
-
-	linkfd, links := loadLinksFile("links.db");
-	defer linkfd.Close();
-
-	var commands map[string] func(*irc.Connection, string, string, string);
-	commands = map[string] func(*irc.Connection, string, string, string) {
-		"ping": ping,
-		"commands": func(ircobj *irc.Connection, ch, nick, msg string) {
-			temp := "";
-			for key := range commands {
-				temp += *prefix + key + " ";
-			}
-			ircobj.Privmsg(ch, nick + ": Current commands: " + temp);
-		},
-		"randomlink": func(ircobj *irc.Connection, ch, nick, msg string) {
-			randomLink(ircobj, ch, nick, msg, links);
-		},
+func handleEndOfMOTD(bot *ircBot, event *irc.Event) {
+	if *bot.nickpass != "" {
+		bot.conn.Privmsg("NickServ", "identify " + *bot.nickpass);
 	}
 
-	ircobj := irc.IRC(*nick, *nick);
-	ircobj.UseTLS = true
+	time.Sleep(3 * time.Second);
+	bot.conn.Join(*bot.channels)
+	bot.conn.Privmsg(*bot.channels, "testing this!");
+}
 
-	err := ircobj.Connect(*server);
+func printPrivmsgs(bot *ircBot, event *irc.Event) {
+	fmt.Printf("\r") // clear input prompt
+	fmt.Printf("         | %s <%s> %s\n",
+	event.Arguments[0], event.Nick, event.Message())
+	printPrompt(bot);
+}
+
+func ibipResponder(bot *ircBot, event *irc.Event) {
+	if event.Message() == ".bots" {
+		bot.conn.Privmsg(event.Arguments[0],
+		"Reporting in! [\x032Go\x0f] " +
+		"(see " + *bot.prefix + "commands)")
+	}
+}
+
+func isPrefix(main, sub []rune) bool {
+	if len(sub) >= len(main) {
+		return false;
+	}
+
+	for i := range sub {
+		if sub[i] != main[i] {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+func handleCommands(bot *ircBot, event *irc.Event) {
+	msg := []rune(event.Message());
+	fix := []rune(*bot.prefix);
+
+	if isPrefix(msg, fix) {
+		str    := string(msg[len(fix):])
+		args   := strings.Split(str, " ");
+		fn, ok := bot.commands[args[0]]
+
+		if ok {
+			go fn(bot, event)
+		}
+	}
+}
+
+func parseLinks(bot *ircBot, event *irc.Event) {
+	var linkmatcher = regexp.MustCompile(`http[s]?://[^ ]*`);
+	// ignore dumb *chan links
+	var ignore = regexp.MustCompile(`(\.onion|chan\.org|chan\.net)`);
+
+	if linkmatcher.MatchString(event.Message()) {
+		matches := linkmatcher.FindAllString(event.Message(), -1);
+
+		fmt.Printf("\r") // clear input prompt
+		fmt.Printf("         > have links...? %q\n", matches);
+
+		for _, match := range matches {
+			if ignore.MatchString(match) {
+				fmt.Printf("[ignored]%s\n", match);
+				continue;
+			}
+
+			fmt.Fprintf(bot.linkfd, "%s\n", match);
+			bot.links = append(bot.links, match);
+		}
+
+		bot.linkfd.Sync();
+	}
+}
+
+type hookpair struct {
+	fn   func (*ircBot, *irc.Event);
+	hook string;
+};
+
+func main() {
+	var botto ircBot;
+
+	botto.nick = flag.String("nick", "aircbot", "IRC nickname")
+	botto.server = flag.String("server", "irc.rizon.net:6697", "server:port combination")
+	botto.nickpass = flag.String("nickpass", "", "Password to identify with NickServ")
+	botto.channels = flag.String("channels", "#fugginbot", "Comma-seperated list of channels to join on startup")
+	botto.prefix = flag.String("prefix", ";", "Command prefix")
+	flag.Parse();
+
+	botto.linkfd, botto.links = loadLinksFile("links.db");
+	defer botto.linkfd.Close();
+
+	//var commands map[string] func(*irc.Connection, string, string, string);
+	botto.commands = map[string] func(*ircBot, *irc.Event) {
+		"ping": ping,
+		"commands": printCommands,
+		"randomlink": randomLink,
+	};
+
+	botto.conn = irc.IRC(*botto.nick, *botto.nick);
+	botto.conn.UseTLS = true
+
+	err := botto.conn.Connect(*botto.server);
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		return
 	}
 
-	ircobj.AddCallback("PRIVMSG", func(event *irc.Event) {
-		if event.Message()[0:1] == (*prefix)[0:1] {
-			args   := strings.Split(event.Message()[1:], " ");
-			fn, ok := commands[args[0]]
+	callbacks := []hookpair {
+		{handleCommands,  "PRIVMSG"},
+		{ibipResponder,   "PRIVMSG"},
+		{parseLinks,      "PRIVMSG"},
+		{printPrivmsgs,   "PRIVMSG"},
+		{handleEndOfMOTD, "376"},
+	};
 
-			if ok {
-				go fn(ircobj, event.Arguments[0],
-				      event.Nick, event.Message())
-			}
-		}
-	})
+	for i := range callbacks {
+		pair := callbacks[i]
+		printPrompt(&botto);
+		fmt.Printf("adding hook for %s @ %#v\n", pair.hook, pair.fn);
 
-	// IBIP responder
-	ircobj.AddCallback("PRIVMSG", func(event *irc.Event) {
-		go func(event *irc.Event) {
-			if event.Message() == ".bots" {
-				ircobj.Privmsg(event.Arguments[0],
-				               "Reporting in! [\x032Go\x0f] " +
-				               "(see " + *prefix + "commands)")
-			}
-		}(event);
-	})
+		botto.conn.AddCallback(pair.hook, func(event *irc.Event) {
+			go pair.fn(&botto, event);
+		});
+	}
 
-	// link parser
-	ircobj.AddCallback("PRIVMSG", func(event *irc.Event) {
-		go func(event *irc.Event) {
-			var linkmatcher = regexp.MustCompile(`http[s]?://[^ ]*`);
-
-			if linkmatcher.MatchString(event.Message()) {
-				matches := linkmatcher.FindAllString(event.Message(), -1);
-
-				fmt.Printf("\r") // clear input prompt
-				fmt.Printf("         > have links...? %q\n", matches);
-
-				for i := range matches {
-					fmt.Fprintf(linkfd, "%s\n", matches[i]);
-					links = append(links, matches[i]);
-				}
-
-				linkfd.Sync();
-			}
-		}(event);
-	})
-
-	// message printer/logger
-	ircobj.AddCallback("PRIVMSG", func(event *irc.Event) {
-		go func(event *irc.Event) {
-			fmt.Printf("\r") // clear input prompt
-			fmt.Printf("         %s <%s> %s\n",
-			           event.Arguments[0], event.Nick, event.Message())
-			printPrompt(ircobj)
-		}(event);
-	})
-
-	// handle end of MOTD
-	ircobj.AddCallback("376", func(event *irc.Event) {
-		go func(event *irc.Event) {
-			if *nickpass != "" {
-				ircobj.Privmsg("NickServ", "identify " + *nickpass);
-			}
-
-			time.Sleep(3 * time.Second);
-			ircobj.Join(*channels)
-			ircobj.Privmsg(*channels, "testing this!");
-		}(event);
-	})
-
-	go ircobj.Loop()
-	lineloop(ircobj);
+	go botto.conn.Loop()
+	lineloop(&botto);
 }
