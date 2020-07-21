@@ -15,18 +15,21 @@ import (
 )
 
 type ircBot struct {
-	conn     *irc.Connection;
+	conn       *irc.Connection;
 
-	links    []string;
-	linkfd   *os.File;
+	links      []string;
+	linkfd     *os.File;
 
-	prefix   *string;
-	nick     *string;
-	channels *string;
-	nickpass *string;
-	server   *string;
+	prefix     *string;
+	nick       *string;
+	channels   *string;
+	nickpass   *string;
+	server     *string;
 
-	commands map[string] func(*ircBot, *irc.Event);
+	commands   map[string] func(*ircBot, *irc.Event);
+
+	lastmsgs   map[string]string; // map nicks to last messages
+	spellcheck Spellchecker;
 };
 
 func ping(bot *ircBot, event *irc.Event) {
@@ -35,9 +38,14 @@ func ping(bot *ircBot, event *irc.Event) {
 }
 
 func randomLink(bot *ircBot, event *irc.Event) {
-	rand.Seed(time.Now().Unix())
-	bot.conn.Privmsg(event.Arguments[0], event.Nick + ": " +
-	                 bot.links[rand.Intn(len(bot.links))]);
+	if len(bot.links) == 0 {
+		bot.conn.Privmsg(event.Arguments[0], event.Nick + ": fresh out of links, sorry.");
+
+	} else {
+		rand.Seed(time.Now().Unix())
+		bot.conn.Privmsg(event.Arguments[0], event.Nick + ": " +
+						 bot.links[rand.Intn(len(bot.links))]);
+	}
 }
 
 func printCommands(bot *ircBot, event *irc.Event) {
@@ -48,6 +56,13 @@ func printCommands(bot *ircBot, event *irc.Event) {
 
 	bot.conn.Privmsg(event.Arguments[0],
 	event.Nick + ": Current commands: " + temp);
+}
+
+func reportBug(bot *ircBot, event *irc.Event) {
+	for i := 0; i < 3; i++ {
+		fmt.Printf("/!\\ BUG REPORT: <%s> %s\n", event.Nick, event.Message());
+	}
+	bot.conn.Privmsg(event.Arguments[0], event.Nick + ": Duly noted.");
 }
 
 func printPrompt(bot *ircBot) {
@@ -94,9 +109,27 @@ func lineloop(bot *ircBot) {
 	}
 }
 
+func readLines(fname string) ([]string, error) {
+	var ret []string;
+	f, err := os.Open(fname);
+	defer f.Close();
+
+	if err != nil {
+		return ret, err;
+	}
+
+	scanner := bufio.NewScanner(f);
+	for scanner.Scan() {
+		ret = append(ret, scanner.Text())
+	}
+
+	return ret, nil;
+}
+
 func loadLinksFile(fname string) (*os.File, []string) {
 	var retlinks []string;
 
+	/*
 	{
 		f, err := os.Open(fname);
 		if err == nil {
@@ -111,8 +144,11 @@ func loadLinksFile(fname string) (*os.File, []string) {
 			retlinks = append(retlinks, "https://google.com");
 		}
 	}
+	*/
 
+	retlinks, _ = readLines(fname);
 	f, err := os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600);
+
 	if err != nil {
 		panic(err);
 	}
@@ -135,6 +171,18 @@ func printPrivmsgs(bot *ircBot, event *irc.Event) {
 	fmt.Printf("         | %s <%s> %s\n",
 	event.Arguments[0], event.Nick, event.Message())
 	printPrompt(bot);
+}
+
+func updateLastmsgs(bot *ircBot, event *irc.Event) {
+	key := event.Nick + event.Arguments[0];
+	bot.lastmsgs[key] = event.Message();
+}
+
+func getLastmsg(bot *ircBot, event *irc.Event, nick string) (string, bool) {
+	key := nick + event.Arguments[0];
+	v, found := bot.lastmsgs[key];
+
+	return v, found
 }
 
 func ibipResponder(bot *ircBot, event *irc.Event) {
@@ -169,9 +217,16 @@ func handleCommands(bot *ircBot, event *irc.Event) {
 		fn, ok := bot.commands[args[0]]
 
 		if ok {
-			go fn(bot, event)
+			fn(bot, event)
 		}
 	}
+
+	updateLastmsgs(bot, event);
+}
+
+func isLink(word string) bool {
+	var linkmatcher = regexp.MustCompile(`http[s]?://[^ ]*`);
+	return linkmatcher.MatchString(word);
 }
 
 func parseLinks(bot *ircBot, event *irc.Event) {
@@ -214,14 +269,19 @@ func main() {
 	botto.prefix = flag.String("prefix", ";", "Command prefix")
 	flag.Parse();
 
+	botto.spellcheck, _ = makeLevDistance("/usr/share/dict/words");
 	botto.linkfd, botto.links = loadLinksFile("links.db");
 	defer botto.linkfd.Close();
 
 	//var commands map[string] func(*irc.Connection, string, string, string);
+	botto.lastmsgs = make(map[string]string);
 	botto.commands = map[string] func(*ircBot, *irc.Event) {
 		"ping": ping,
 		"commands": printCommands,
 		"randomlink": randomLink,
+		"spellcheck": spellcheckCommand,
+		"sp": spellcheckCommand,
+		"bug": reportBug,
 	};
 
 	botto.conn = irc.IRC(*botto.nick, *botto.nick);
