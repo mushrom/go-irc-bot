@@ -189,7 +189,7 @@ func ibipResponder(bot *ircBot, event *irc.Event) {
 	if event.Message() == ".bots" {
 		bot.conn.Privmsg(event.Arguments[0],
 		"Reporting in! [\x032Go\x0f] " +
-		"(see " + *bot.prefix + "commands)")
+		"(see " + *bot.prefix + "commands and " + *bot.prefix + "help)")
 	}
 }
 
@@ -282,6 +282,7 @@ func main() {
 		"spellcheck": spellcheckCommand,
 		"sp": spellcheckCommand,
 		"bug": reportBug,
+		"help": helpCommand,
 	};
 
 	botto.conn = irc.IRC(*botto.nick, *botto.nick);
