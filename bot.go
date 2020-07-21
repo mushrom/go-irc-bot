@@ -269,7 +269,7 @@ func main() {
 	botto.prefix = flag.String("prefix", ";", "Command prefix")
 	flag.Parse();
 
-	botto.spellcheck, _ = makeLevDistance("/usr/share/dict/words");
+	botto.spellcheck, _ = makeLevDistance("./megadict.txt");
 	botto.linkfd, botto.links = loadLinksFile("links.db");
 	defer botto.linkfd.Close();
 

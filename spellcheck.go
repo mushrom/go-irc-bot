@@ -9,13 +9,16 @@ import (
 )
 
 type Spellchecker interface {
-	check(word []rune) (int, []string);
+	check(word string) (int, []string);
+	valid(word string) bool;
 	distance(tester, target []rune) int;
 }
 
 type LevDistance struct {
-	words [][]rune;
-	table [64][64]int;
+	words     [][]rune;
+	table     [64][64]int;
+	// to quickly lookup valid words, most words won't have errors
+	stringset map[string]bool;
 }
 
 func strToRunes(word string) []rune {
@@ -98,11 +101,29 @@ func (lev *LevDistance) distance(tester, target []rune) int {
 	return lev.table[len(tester)-1][len(target)-1];
 }
 
-func (lev *LevDistance) check(word []rune) (int, []string) {
+func abs(a int) int {
+	if a < 0 {
+		return -a;
+	} else {
+		return a;
+	}
+}
+
+func (lev *LevDistance) check(sword string) (int, []string) {
+	if lev.valid(sword) {
+		// return early if there's a valid entry in the hashmap
+		return 0, []string{sword};
+	}
+
+	word   := strToRunes(sword);
 	curMin := len(word) + 1;
 	var matches []string;
 
 	for _, dictword := range lev.words {
+		if abs(len(word) - len(dictword)) > curMin {
+			continue;
+		}
+
 		dist := lev.distance(word, dictword);
 
 		if dist < curMin {
@@ -117,28 +138,35 @@ func (lev *LevDistance) check(word []rune) (int, []string) {
 	return curMin, matches;
 }
 
+func (lev *LevDistance) valid(word string) bool {
+	_, found := lev.stringset[word];
+	return found;
+}
+
 func makeLevDistance(fname string) (Spellchecker, error) {
 	lines, err := readLines(fname);
 	var linerunes [][]rune;
+	set := make(map[string]bool);
 
 	for _, line := range lines {
 		ru := strToRunes(line);
 		ru[0] = unicode.ToLower(ru[0]);
 		linerunes = append(linerunes, ru);
+		set[line] = true;
 	}
 
-	ret := LevDistance{linerunes, [64][64]int{}};
+	ret := LevDistance{linerunes, [64][64]int{}, set};
 	return &ret, err;
 }
 
-func doSpellcheck(bot *ircBot, args [][]rune) string {
+func doSpellcheck(bot *ircBot, args []string) string {
 	msg := "";
 
 	for _, arg := range args {
 		dist, matches := bot.spellcheck.check(arg);
 
-		if dist > 0 && !isLink(runesToStr(arg)) {
-			msg += "\x1f" + runesToStr(arg) + "\x0f (";
+		if dist > 0 && !isLink(arg) {
+			msg += "\x1f" + arg + "\x0f (";
 
 			for i, m := range matches {
 				if i > 2 {
@@ -159,7 +187,7 @@ func doSpellcheck(bot *ircBot, args [][]rune) string {
 			msg += " "
 
 		} else {
-			msg += runesToStr(arg) + " ";
+			msg += arg + " ";
 		}
 	}
 
@@ -183,7 +211,7 @@ func stripPunctuation(str string) string {
 
 	for _, ru := range str {
 		switch ru {
-			case ',', '.', '!', '?', '<', '>', '[', ']':
+			case ',', '.', '!', '?', '<', '>', '[', ']', '"':
 				continue;
 			default:
 				ret += string(ru);
@@ -193,13 +221,24 @@ func stripPunctuation(str string) string {
 	return ret;
 }
 
+func lowerFirsts(xs []string) []string {
+	var ret []string;
+
+	for _, s := range xs  {
+		ru := []rune(s);
+		ru[0] = unicode.ToLower(ru[0]);
+		ret = append(ret, string(ru));
+	}
+
+	return ret;
+}
+
 func parseArgStr(str string) []string {
-	return stripEmpty(strings.Split(stripPunctuation(str), " "));
+	return lowerFirsts(stripEmpty(strings.Split(stripPunctuation(str), " ")));
 }
 
 func spellcheckCommand(bot *ircBot, event *irc.Event) {
 	strargs := parseArgStr(event.Message())[1:];
-	var args [][]rune;
 
 	// if no arguments are given, spellcheck the last message the user typed
 	if len(strargs) == 0 {
@@ -224,24 +263,7 @@ func spellcheckCommand(bot *ircBot, event *irc.Event) {
 
 		strargs = parseArgStr(lastmsg);
 	}
+	// otherwise check arguments
 
-	for _, arg := range strargs {
-		ru := strToRunes(arg);
-		ru[0] = unicode.ToLower(ru[0]);
-		args = append(args, ru);
-
-		/*
-		// trim punctuation from the end of words
-		lastchar := arg[len(arg) - 1];
-
-		switch lastchar {
-			case ',', ':', '.', ';', '!', '?', '>', '<':
-				args = append(args, strToRunes(arg[:len(arg)-1])));
-			default:
-				args = append(args, strToRunes(strings.ToLower(arg)));
-		}
-		*/
-	}
-
-	bot.conn.Privmsg(event.Arguments[0], "<"+event.Nick+"> " + doSpellcheck(bot, args));
+	bot.conn.Privmsg(event.Arguments[0], "<"+event.Nick+"> " + doSpellcheck(bot, strargs));
 }

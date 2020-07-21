@@ -12,7 +12,10 @@ var helpStrings = map[string]string {
 	              "1 argument will interpret the argument as a nick and " +
 				  "spellcheck their last message, and 2+ arguments will " +
 				  "spellcheck the given arguments.",
-	"sp":         "Alias for spellcheck.",
+	"sp":         "Given no arguments, will spellcheck your last message, " +
+	              "1 argument will interpret the argument as a nick and " +
+				  "spellcheck their last message, and 2+ arguments will " +
+				  "spellcheck the given arguments.",
 	"bug":        "Files a bug report.",
 	"help":       "Display this help message.",
 };
