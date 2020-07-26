@@ -239,31 +239,25 @@ func parseArgStr(str string) []string {
 
 func spellcheckCommand(bot *ircBot, event *irc.Event) {
 	strargs := parseArgStr(event.Message())[1:];
+	destnick := event.Nick;
 
-	// if no arguments are given, spellcheck the last message the user typed
-	if len(strargs) == 0 {
-		lastmsg, found := getLastmsg(bot, event, event.Nick);
+	if len(strargs) == 1 {
+		destnick = strargs[0];
+	}
+
+	if len(strargs) < 2 {
+		lastmsg, found := getLastmsg(bot, event, destnick);
 
 		if !found {
 			bot.conn.Privmsg(event.Arguments[0],
-			                 event.Nick+": haven't seen anything from you recently mate");
-			return;
-		}
-
-		strargs = parseArgStr(lastmsg);
-
-	// if one argument is given, assume it's a user
-	} else if len(strargs) == 1 {
-		lastmsg, found := getLastmsg(bot, event, strargs[0]);
-		if !found {
-			bot.conn.Privmsg(event.Arguments[0],
-			                 event.Nick+": haven't seen anything from them");
+			                 event.Nick+": haven't seen anything from " +
+			                 destnick + " recently.");
 			return;
 		}
 
 		strargs = parseArgStr(lastmsg);
 	}
-	// otherwise check arguments
 
-	bot.conn.Privmsg(event.Arguments[0], "<"+event.Nick+"> " + doSpellcheck(bot, strargs));
+	bot.conn.Privmsg(event.Arguments[0],
+	                 "<"+destnick+"> " + doSpellcheck(bot, strargs));
 }

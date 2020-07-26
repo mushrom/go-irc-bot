@@ -283,6 +283,7 @@ func main() {
 		"sp": spellcheckCommand,
 		"bug": reportBug,
 		"help": helpCommand,
+		"8ball": eightballCommand,
 	};
 
 	botto.conn = irc.IRC(*botto.nick, *botto.nick);
