@@ -169,7 +169,7 @@ func doSpellcheck(bot *ircBot, args []string) string {
 			msg += "\x1f" + arg + "\x0f (";
 
 			for i, m := range matches {
-				if i > 2 {
+				if i > 2 && i+1 != len(matches) {
 					msg += "\x033...(+" + strconv.Itoa(len(matches) - i) + ")\x0f";
 					break;
 				}
@@ -246,16 +246,28 @@ func spellcheckCommand(bot *ircBot, event *irc.Event) {
 	}
 
 	if len(strargs) < 2 {
-		lastmsg, found := getLastmsg(bot, event, destnick);
+		lastmsg, found := getLastmsg(bot, event, strings.ToLower(destnick));
 
-		if !found {
+		if found {
+			// target is a user we've seen, so check their last message
+			strargs = parseArgStr(lastmsg);
+
+		} else if len(strargs) == 1 {
+			// haven't seen the user, so assume it's a word check and
+			// correct the destination nick
+			destnick = event.Nick;
+
+		} else if len(strargs) == 0 {
+			// otherwise this was supposed to check the user's last message
+			// but we haven't seen anything from the user yet.
+
 			bot.conn.Privmsg(event.Arguments[0],
-			                 event.Nick+": haven't seen anything from " +
-			                 destnick + " recently.");
+			                 event.Nick+": haven't seen anything from you recently.");
 			return;
 		}
 
-		strargs = parseArgStr(lastmsg);
+		// otherwise fall through assuming the user meant to spellcheck
+		// a specific word.
 	}
 
 	bot.conn.Privmsg(event.Arguments[0],

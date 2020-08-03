@@ -174,7 +174,7 @@ func printPrivmsgs(bot *ircBot, event *irc.Event) {
 }
 
 func updateLastmsgs(bot *ircBot, event *irc.Event) {
-	key := event.Nick + event.Arguments[0];
+	key := strings.ToLower(event.Nick) + event.Arguments[0];
 	bot.lastmsgs[key] = event.Message();
 }
 
