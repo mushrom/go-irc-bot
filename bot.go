@@ -29,6 +29,7 @@ type ircBot struct {
 	commands   map[string] func(*ircBot, *irc.Event);
 
 	lastmsgs   map[string]string; // map nicks to last messages
+	chanmsgs   map[string][]*irc.Event;
 	spellcheck Spellchecker;
 };
 
@@ -166,6 +167,19 @@ func handleEndOfMOTD(bot *ircBot, event *irc.Event) {
 	bot.conn.Privmsg(*bot.channels, "testing this!");
 }
 
+func sendLastLog(bot *ircBot, event *irc.Event) {
+	arr, found := bot.chanmsgs[event.Arguments[0]];
+
+	if found {
+		for _, msg := range arr {
+			msg := "[" + event.Arguments[0] + "] " +
+			       "<" + msg.Nick + "> " +
+			       msg.Message();
+			bot.conn.Notice(event.Nick, msg);
+		}
+	}
+}
+
 func printPrivmsgs(bot *ircBot, event *irc.Event) {
 	fmt.Printf("\r") // clear input prompt
 	fmt.Printf("         | %s <%s> %s\n",
@@ -174,8 +188,20 @@ func printPrivmsgs(bot *ircBot, event *irc.Event) {
 }
 
 func updateLastmsgs(bot *ircBot, event *irc.Event) {
-	key := strings.ToLower(event.Nick) + event.Arguments[0];
+	channel := event.Arguments[0];
+	key := strings.ToLower(event.Nick) + channel;
 	bot.lastmsgs[key] = event.Message();
+
+	_, found := bot.chanmsgs[channel];
+	if !found {
+		bot.chanmsgs[channel] = []*irc.Event{event};
+
+	} else {
+		bot.chanmsgs[channel] = append(bot.chanmsgs[channel], event);
+		if len(bot.chanmsgs[channel]) > 20 {
+			bot.chanmsgs[channel] = bot.chanmsgs[channel][1:]
+		}
+	}
 }
 
 func getLastmsg(bot *ircBot, event *irc.Event, nick string) (string, bool) {
@@ -275,6 +301,7 @@ func main() {
 
 	//var commands map[string] func(*irc.Connection, string, string, string);
 	botto.lastmsgs = make(map[string]string);
+	botto.chanmsgs = make(map[string][]*irc.Event);
 	botto.commands = map[string] func(*ircBot, *irc.Event) {
 		"ping": ping,
 		"commands": printCommands,
@@ -286,7 +313,7 @@ func main() {
 		"8ball": eightballCommand,
 	};
 
-	botto.conn = irc.IRC(*botto.nick, *botto.nick);
+	botto.conn = irc.IRC(*botto.nick, (*botto.nick)[0:2]);
 	botto.conn.UseTLS = true
 
 	err := botto.conn.Connect(*botto.server);
@@ -301,6 +328,7 @@ func main() {
 		{parseLinks,      "PRIVMSG"},
 		{printPrivmsgs,   "PRIVMSG"},
 		{handleEndOfMOTD, "376"},
+		{sendLastLog,     "JOIN"},
 	};
 
 	for i := range callbacks {
