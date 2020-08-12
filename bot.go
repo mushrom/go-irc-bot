@@ -31,6 +31,9 @@ type ircBot struct {
 	lastmsgs   map[string]string; // map nicks to last messages
 	chanmsgs   map[string][]*irc.Event;
 	spellcheck Spellchecker;
+
+	noscrollfd *os.File;
+	scrollback_disabled map[string]bool;
 };
 
 func ping(bot *ircBot, event *irc.Event) {
@@ -169,15 +172,51 @@ func handleEndOfMOTD(bot *ircBot, event *irc.Event) {
 
 func sendLastLog(bot *ircBot, event *irc.Event) {
 	arr, found := bot.chanmsgs[event.Arguments[0]];
+	channel := event.Arguments[0];
+	chanid  := "[" + channel + "] ";
+
+	if bot.scrollback_disabled[event.Nick] || bot.scrollback_disabled[channel] {
+		//bot.conn.Noticef(event.Nick, chanid + "<scrollback disabled>");
+		return;
+	}
+
+	// avoid saying anything if the bot hasn't seen anything yet
+	if len(arr) == 0 {
+		return;
+	}
+
+	// XXX: slight delay to avoid having "channel synced" messages in between
+	time.Sleep(3 * time.Second);
+
+	bot.conn.Noticef(event.Nick, chanid + "Previously seen on %s:", channel);
+	bot.conn.Noticef(event.Nick,
+		"%s(To disable scrollback, do '/msg %s %snoscrollback')",
+		chanid, *bot.nick, *bot.prefix)
 
 	if found {
 		for _, msg := range arr {
-			msg := "[" + event.Arguments[0] + "] " +
-			       "<" + msg.Nick + "> " +
-			       msg.Message();
-			bot.conn.Notice(event.Nick, msg);
+			bot.conn.Noticef(event.Nick, "%s  <%s> %s",
+				chanid, msg.Nick, msg.Message());
 		}
 	}
+}
+
+func scrollbackOptoutCommand(bot *ircBot, event *irc.Event) {
+	bot.scrollback_disabled[event.Nick] = true;
+	bot.conn.Privmsg(event.Arguments[0],
+		event.Nick + ": Join scrollback has been disabled. (;scrollback to enable.)")
+
+	fmt.Fprintf(bot.noscrollfd, "%s off\n", event.Nick);
+	bot.noscrollfd.Sync();
+}
+
+func scrollbackOptinCommand(bot *ircBot, event *irc.Event) {
+	bot.scrollback_disabled[event.Nick] = false;
+	bot.conn.Privmsg(event.Arguments[0],
+		event.Nick + ": Join scrollback has been enabled. (;noscrollback to disable.)")
+
+	fmt.Fprintf(bot.noscrollfd, "%s on\n", event.Nick);
+	bot.noscrollfd.Sync();
 }
 
 func printPrivmsgs(bot *ircBot, event *irc.Event) {
@@ -198,7 +237,7 @@ func updateLastmsgs(bot *ircBot, event *irc.Event) {
 
 	} else {
 		bot.chanmsgs[channel] = append(bot.chanmsgs[channel], event);
-		if len(bot.chanmsgs[channel]) > 20 {
+		if len(bot.chanmsgs[channel]) > 8 {
 			bot.chanmsgs[channel] = bot.chanmsgs[channel][1:]
 		}
 	}
@@ -296,8 +335,28 @@ func main() {
 	flag.Parse();
 
 	botto.spellcheck, _ = makeLevDistance("./megadict.txt");
+
+	// TODO: migrate to SQL?
+	// load link database
 	botto.linkfd, botto.links = loadLinksFile("links.db");
 	defer botto.linkfd.Close();
+
+	// load scrollback optout state
+	var disabled_nicks []string;
+	botto.scrollback_disabled = make(map[string]bool);
+	botto.noscrollfd, disabled_nicks = loadLinksFile("noscroll.db");
+
+	for _, nickopt := range disabled_nicks {
+		s := strings.Split(nickopt, " ");
+		nick, opt := s[0], s[1];
+
+		if opt == "off" {
+			botto.scrollback_disabled[nick] = true;
+
+		} else {
+			botto.scrollback_disabled[nick] = false;
+		}
+	}
 
 	//var commands map[string] func(*irc.Connection, string, string, string);
 	botto.lastmsgs = make(map[string]string);
@@ -311,6 +370,8 @@ func main() {
 		"bug": reportBug,
 		"help": helpCommand,
 		"8ball": eightballCommand,
+		"noscrollback": scrollbackOptoutCommand,
+		"scrollback":   scrollbackOptinCommand,
 	};
 
 	botto.conn = irc.IRC(*botto.nick, (*botto.nick)[0:2]);

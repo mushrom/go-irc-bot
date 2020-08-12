@@ -5,21 +5,23 @@ import (
 )
 
 var helpStrings = map[string]string {
-	"ping":       "Responds with the current unix time in UTC.",
-	"commands":   "Display the list of currently loaded commands.",
-	"randomlink": "Sends a link seen somewhere in chat before.",
-	"spellcheck": "0 arguments will spellcheck your last message. " +
-	              "1 argument will spellcheck another user's message if it's "+
-				  "an existing nick, or spellcheck the word if not. " +
-				  "2+ arguments will spellcheck the given arguments.",
-	"sp":         "0 arguments will spellcheck your last message. " +
-	              "1 argument will spellcheck another user's message if it's "+
-				  "an existing nick, or spellcheck the word if not. " +
-				  "2+ arguments will spellcheck the given arguments.",
-	"8ball":      "Answers a question using quantum thermodynamic entropy to "+
-	              "view into the future.",
-	"bug":        "Files a bug report.",
-	"help":       "Display this help message.",
+	"ping":         "Responds with the current unix time in UTC.",
+	"commands":     "Display the list of currently loaded commands.",
+	"randomlink":   "Sends a link seen somewhere in chat before.",
+	"spellcheck":   "0 arguments will spellcheck your last message. " +
+	                "1 argument will spellcheck another user's message if it's "+
+				    "an existing nick, or spellcheck the word if not. " +
+				    "2+ arguments will spellcheck the given arguments.",
+	"sp":           "0 arguments will spellcheck your last message. " +
+	                "1 argument will spellcheck another user's message if it's "+
+				    "an existing nick, or spellcheck the word if not. " +
+				    "2+ arguments will spellcheck the given arguments.",
+	"8ball":        "Answers a question using quantum thermodynamic entropy to "+
+	                "view into the future.",
+	"noscrollback": "Disable scrollback notifications when joining.",
+	"scrollback":   "Enable scrollback notifications when joining.",
+	"bug":          "File a bug report.",
+	"help":         "Display this help message.",
 };
 
 func helpCommand(bot *ircBot, event *irc.Event) {
